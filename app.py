@@ -8,22 +8,10 @@ from datetime import datetime, date, timedelta
 import google.generativeai as genai
 import twstock
 import os
+from functools import partial
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-import requests
-import urllib3
-import ssl
-from bs4 import BeautifulSoup
-import plotly.graph_objects as go
-from datetime import datetime, date, timedelta
-import google.generativeai as genai
-import twstock
-import os
-
-# --- 強制繞過 SSL 驗證 (解決 Zeabur 部署錯誤) ---
-# 1. 針對全域 https 連線
+# --- 1. 徹底繞過 SSL 驗證 (解決 SSL: CERTIFICATE_VERIFY_FAILED) ---
+# 針對全域環境
 try:
     _create_unverified_https_context = ssl._create_unverified_context
 except AttributeError:
@@ -31,34 +19,49 @@ except AttributeError:
 else:
     ssl._create_default_https_context = _create_unverified_https_context
 
-# 2. 針對 requests 套件 (twstock 內部使用)
-# 透過 patch 方式讓 requests 預設不驗證 SSL
-from functools import partial
+# 針對 requests 套件 (twstock 內部使用的核心)
+# 這會強制讓所有透過 requests 發出的 get/post 請求都預設 verify=False
 requests.get = partial(requests.get, verify=False)
 requests.post = partial(requests.post, verify=False)
 
-# 3. 關閉警告訊息
+# 關閉惱人的 InsecureRequestWarning 警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- 數據庫與環境初始化 ---
-DATA_FILE = "tx_history_database.csv"
+# --- 2. 增加防禦性抓取函數 ---
 
-@st.cache_resource
-def init_env():
-    """初始化環境，若更新代碼失敗則跳過 (不影響主程式運行)"""
+def get_stocks_kbar_data(stock_ids):
+    """獲取股票數據，並確保失敗時不會回傳 None"""
     try:
-        # twstock 更新代碼時會連到 https://isin.twse.com.tw/
-        twstock.__update_codes()
-        return True
+        # twstock.realtime.get 內部會呼叫 requests.get
+        data = twstock.realtime.get(stock_ids)
+        if data is None or not data.get('success', False):
+            st.error("⚠️ twstock 暫時無法從證交所獲取即時數據 (可能非交易時段或連線受阻)")
+            return {} # 回傳空字典避免 subscriptable 錯誤
+        return data
     except Exception as e:
-        # 若還是失敗，僅記錄但不崩潰
-        st.sidebar.warning(f"⚠️ 股票代碼自動更新跳過 (SSL 限制)")
-        return False
+        st.error(f"❌ 股票即時數據獲取失敗: {str(e)}")
+        return {}
 
-# 執行初始化
-init_env()
+# --- 3. UI 渲染部分的修正 (Line 166 附近) ---
 
-# ... (其餘 app.py 代碼保持不變)
+# 在您的主程式邏輯中：
+if "sync_ready" in st.session_state:
+    st.subheader("🔥 權值股 TOP 15 當日走勢")
+    
+    w_data = st.session_state.get('weighted_data', {})
+    
+    # 檢查 w_data 是否為空 (防禦性檢查)
+    if not w_data:
+        st.warning("目前無權值股數據可顯示，請檢查網路或稍後再試。")
+    else:
+        cols_w = st.columns(15)
+        for idx, sid in enumerate(WEIGHTED_IDS):
+            with cols_w[idx]:
+                # 再次確認該股票代碼是否存在於回傳結果中
+                if sid in w_data:
+                    render_kbar_component(w_data[sid])
+                else:
+                    st.caption(f"{sid} 無數據")
 
 # --- 基礎與連線設定 ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
