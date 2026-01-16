@@ -8,3 +8,5 @@ plotly
 google-generativeai
 twstock
 numpy
+google-auth
+gspread
