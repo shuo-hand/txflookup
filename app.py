@@ -9,6 +9,57 @@ import google.generativeai as genai
 import twstock
 import os
 
+import streamlit as st
+import pandas as pd
+import numpy as np
+import requests
+import urllib3
+import ssl
+from bs4 import BeautifulSoup
+import plotly.graph_objects as go
+from datetime import datetime, date, timedelta
+import google.generativeai as genai
+import twstock
+import os
+
+# --- 強制繞過 SSL 驗證 (解決 Zeabur 部署錯誤) ---
+# 1. 針對全域 https 連線
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
+
+# 2. 針對 requests 套件 (twstock 內部使用)
+# 透過 patch 方式讓 requests 預設不驗證 SSL
+from functools import partial
+requests.get = partial(requests.get, verify=False)
+requests.post = partial(requests.post, verify=False)
+
+# 3. 關閉警告訊息
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# --- 數據庫與環境初始化 ---
+DATA_FILE = "tx_history_database.csv"
+
+@st.cache_resource
+def init_env():
+    """初始化環境，若更新代碼失敗則跳過 (不影響主程式運行)"""
+    try:
+        # twstock 更新代碼時會連到 https://isin.twse.com.tw/
+        twstock.__update_codes()
+        return True
+    except Exception as e:
+        # 若還是失敗，僅記錄但不崩潰
+        st.sidebar.warning(f"⚠️ 股票代碼自動更新跳過 (SSL 限制)")
+        return False
+
+# 執行初始化
+init_env()
+
+# ... (其餘 app.py 代碼保持不變)
+
 # --- 基礎與連線設定 ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 DATA_FILE = "tx_history_database.csv"
